@@ -5,8 +5,8 @@
   gather_facts: no
 
   vars:
-    gvm_user: "{{ gvm_api_user }}"
-    gvm_password: "{{ gvm_api_password }}"
+    gvm_user: "{{ tower_username }}"
+    gvm_password: "{{ tower_password }}"
     gvm_host_ip: "192.168.81.128" # <--- ¡PON AQUÍ LA IP REAL DE TU KALI!
     gvm_api_port: "9390"
 
