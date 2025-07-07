@@ -1,0 +1,100 @@
+---
+- name: Crear un target y ejecutar un escaneo en GVM
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  vars:
+    gvm_user: "{{ gvm_api_user }}"
+    gvm_password: "{{ gvm_api_password }}"
+    gvm_host_ip: "192.168.81.128" # <--- ¡PON AQUÍ LA IP REAL DE TU KALI!
+    gvm_api_port: "9390"
+
+    target_ip: "{{ target_ip }}"
+    target_name: "{{ target_name }}"
+    task_name: "{{ task_name }}"
+    report_email: "{{ report_email | default('') }}"
+
+    scan_config_id: "daba56c8-73ec-11df-a475-002264764cea" # Tus IDs reales
+    port_list_id: "33d0cd82-57c6-11e1-8ed1-406186ea4fc5" # Tus IDs reales
+    alive_test: "Scan Config Default"
+    scanner_id: "08b69003-5fc2-4037-a479-93b440211c73" # Tus IDs reales
+
+  tasks:
+    - name: Crear objetivo en GVM
+      ansible.builtin.shell: >
+        gvm-cli --gmp-username {{ gvm_user }} --gmp-password {{ gvm_password }}
+        --hostname {{ gvm_host_ip }} --port {{ gvm_api_port }} --xml "
+        <create_target>
+          <name>{{ target_name }}</name>
+          <hosts>{{ target_ip }}</hosts>
+          <port_list id='{{ port_list_id }}'/>
+          <alive_test>{{ alive_test }}</alive_test>
+        </create_target>"
+      register: target_result
+
+    - name: Verificar resultado de creación del target
+      ansible.builtin.debug:
+        var: target_result.stdout
+
+    - name: Extraer el ID del target creado
+      ansible.builtin.set_fact:
+        target_id: "{{ target_result.stdout | regex_search('id=\"([a-f0-9\\-]+)\"', '\\1') | first }}"
+
+    - name: Crear tarea de escaneo en GVM
+      ansible.builtin.shell: >
+        gvm-cli --gmp-username {{ gvm_user }} --gmp-password {{ gvm_password }}
+        --hostname {{ gvm_host_ip }} --port {{ gvm_api_port }} --xml "
+        <create_task>
+          <name>{{ task_name }}</name>
+          <target id='{{ target_id }}'/>
+          <config id='{{ scan_config_id }}'/>
+          <scanner id='{{ scanner_id }}' />
+        </create_task>"
+      register: task_result
+
+    - name: Verificar resultado de creación de la tarea
+      ansible.builtin.debug:
+        var: task_result.stdout
+
+    - name: Extraer el ID de la tarea creada
+      ansible.builtin.set_fact:
+        task_id: "{{ task_result.stdout | regex_search('id=\"([a-f0-9\\-]+)\"', '\\1') | first }}"
+
+    - name: Iniciar la tarea de escaneo en GVM
+      ansible.builtin.shell: >
+        gvm-cli --gmp-username {{ gvm_user }} --gmp-password {{ gvm_password }}
+        --hostname {{ gvm_host_ip }} --port {{ gvm_api_port }} --xml "
+        <start_task task_id='{{ task_id }}' />"
+      register: start_result
+
+    - name: Mostrar Task ID
+      ansible.builtin.debug:
+        msg: "task_id: {{ task_id }}"
+
+    - name: Esperar a que el escaneo finalice (opcional, pero recomendado)
+      ansible.builtin.shell: >
+        gvm-cli --gmp-username {{ gvm_user }} --gmp-password {{ gvm_password }}
+        --hostname {{ gvm_host_ip }} --port {{ gvm_api_port }} --xml "<get_tasks task_id='{{ task_id }}'/>" |
+        grep -oP '(?<=<progress>)[0-9]+(?=</progress>)'
+      register: scan_progress
+      until: scan_progress.stdout | int == 100
+      retries: 60
+      delay: 10
+      changed_when: false
+
+    - name: Generar y enviar reporte por correo electrónico (si se proporcionó un correo)
+      ansible.builtin.command: >
+        php {{ playbook_dir }}/generar_reporte.php
+        --email="{{ report_email }}"
+        --target_ip="{{ target_ip }}"
+      args:
+        chdir: "{{ playbook_dir }}"
+      when: report_email is defined and report_email | length > 0
+      register: php_report_output
+      ignore_errors: true
+
+    - name: Mostrar salida del script de reporte PHP
+      ansible.builtin.debug:
+        var: php_report_output.stdout
+      when: report_email is defined and report_email | length > 0
